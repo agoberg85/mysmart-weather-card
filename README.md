@@ -101,7 +101,10 @@ If `icon_path` is set, the card looks for icons using the Home Assistant conditi
 - `rainy.svg`
 - `clear-night.svg`
 - `partlycloudy.svg`
+- etc
 
+I recommend placing the icon files in a folder inside the www folder.
+See ![Home Assistant Weather Condition mapping](https://www.home-assistant.io/integrations/weather/#condition-mapping) for what filenames are required.
 It first tries `.svg`, then falls back to `.png`, and finally falls back to built-in Home Assistant icons if no local file exists.
 
 ## Development
