@@ -17,7 +17,7 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 - **Localized labels:** Supports English, Norwegian, and German condition and weekday names. Let me know if you want to help with translation.
 - **Optional local icon pack:** Use your own condition-based icon files via `icon_path`.
 - **Popup-friendly layout hack:** Optional `hourly_width_offset` for hourly rows inside modals/popups.
-- **Visual editor support:** Main options are available directly in the Lovelace UI editor.
+- **Visual editor support:** Main options are available directly in the Home Assistant UI editor.
 
 ## Installation
 
