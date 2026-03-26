@@ -640,7 +640,7 @@ class MySmartWeatherCard extends LitElement {
     const hourlyLeftBleed = isHourly && hourlyWidthOffset ? Math.round(hourlyWidthOffset / 2) : 0;
     const haCardStyle = [
       effectiveCardBackground ? `background: ${effectiveCardBackground};` : '',
-      isHourly && hourlyWidthOffset ? `margin: 0 0 12px ${-hourlyLeftBleed}px;` : '',
+      isHourly && hourlyWidthOffset ? `margin: 0 0 0 ${-hourlyLeftBleed}px;` : '',
       isHourly && hourlyWidthOffset ? `width: calc(100% + ${hourlyWidthOffset}px);` : '',
       isHourly && hourlyWidthOffset ? '--ha-card-border-radius: 0px;' : '',
     ].filter(Boolean).join(' ');

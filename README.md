@@ -2,7 +2,7 @@
 
 A custom Home Assistant weather card for Home Assistant that loads forecast data from `weather.get_forecasts` and renders it in `hourly`, `current`, or `daily` mode.
 
-![Weather Card Screenshot](./screenshot.jpg)
+![Weather Card Screenshot](./screenshot2.jpg)
 
 ## Support development
 
