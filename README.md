@@ -59,7 +59,7 @@ title: Været nå
 show_title: true
 language: no
 background_color: var(--gray200)
-icon_path: /local/ic/weather_icons/met
+icon_path: /local/weather_icons/met
 ```
 
 ### Daily Mode Example
@@ -72,7 +72,7 @@ show_title: false
 language: de
 skip_first: true
 background_color: var(--gray200)
-icon_path: /local/ic/weather_icons/met
+icon_path: /local/weather_icons/met
 ```
 
 ### Main Options
