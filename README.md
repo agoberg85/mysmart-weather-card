@@ -35,7 +35,7 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 
 1. Download the `mysmart-weather-card.js` file from this repository.
 2. Copy it to the `www` directory in your Home Assistant `config` folder.
-3. In Lovelace, go to "Manage Resources" and add:
+3. In Home Assistant, go to Settings > Dashboards, click the three dots in the top corner and go to "Resources" and add:
    - URL: `/local/mysmart-weather-card.js`
    - Resource Type: `JavaScript Module`
 
