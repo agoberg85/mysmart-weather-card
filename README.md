@@ -57,7 +57,7 @@ entity: weather.forecast_nilsen_goberg
 mode: current
 title: Været nå
 show_title: true
-language: no
+language: "no"
 background_color: var(--gray200)
 icon_path: /local/weather_icons/met
 ```
@@ -69,7 +69,7 @@ type: custom:mysmart-weather-card
 entity: weather.forecast_nilsen_goberg
 mode: daily
 show_title: false
-language: de
+language: "de"
 skip_first: true
 background_color: var(--gray200)
 icon_path: /local/weather_icons/met
