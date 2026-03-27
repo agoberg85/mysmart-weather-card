@@ -91,6 +91,15 @@ class MySmartWeatherCard extends LitElement {
     this._lastFetchAt = 0;
     this._lastEntityVersion = '';
     this._requestToken = 0;
+    this._dragScrollActive = false;
+    this._dragPointerId = null;
+    this._dragStartX = 0;
+    this._dragStartScrollLeft = 0;
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._endDragScroll();
   }
 
   setConfig(config) {
@@ -607,6 +616,49 @@ class MySmartWeatherCard extends LitElement {
     `;
   }
 
+  _startDragScroll(event) {
+    if (this.config.mode !== 'hourly' || event.pointerType !== 'mouse' || event.button !== 0) {
+      return;
+    }
+
+    const scroller = event.currentTarget;
+    this._dragScrollActive = true;
+    this._dragPointerId = event.pointerId;
+    this._dragStartX = event.clientX;
+    this._dragStartScrollLeft = scroller.scrollLeft;
+    scroller.classList.add('dragging');
+    scroller.setPointerCapture?.(event.pointerId);
+  }
+
+  _moveDragScroll(event) {
+    if (!this._dragScrollActive || event.pointerId !== this._dragPointerId) {
+      return;
+    }
+
+    const scroller = event.currentTarget;
+    const deltaX = event.clientX - this._dragStartX;
+    scroller.scrollLeft = this._dragStartScrollLeft - deltaX;
+    event.preventDefault();
+  }
+
+  _endDragScroll(event) {
+    if (event && this._dragPointerId !== null && event.pointerId !== this._dragPointerId) {
+      return;
+    }
+
+    const scroller = event?.currentTarget || this.renderRoot?.querySelector('.hours-scroll.dragging');
+
+    if (scroller) {
+      scroller.classList.remove('dragging');
+      if (event && scroller.hasPointerCapture?.(event.pointerId)) {
+        scroller.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    this._dragScrollActive = false;
+    this._dragPointerId = null;
+  }
+
   render() {
     if (!this.config || !this.hass) {
       return html``;
@@ -678,7 +730,14 @@ class MySmartWeatherCard extends LitElement {
                   ${dailyItems.map((item) => this._renderDaily(item, units))}
                 </div>
               ` : html`
-                <div class="hours-scroll">
+                <div
+                  class="hours-scroll"
+                  @pointerdown=${this._startDragScroll}
+                  @pointermove=${this._moveDragScroll}
+                  @pointerup=${this._endDragScroll}
+                  @pointercancel=${this._endDragScroll}
+                  @pointerleave=${this._endDragScroll}
+                >
                   <div class="hours-row">
                     ${forecastItems.map((item) => this._renderHour(item, units))}
                   </div>
@@ -730,10 +789,16 @@ class MySmartWeatherCard extends LitElement {
         padding: 2px 12px 6px var(--hourly-start-padding);
         scrollbar-width: none;
         box-sizing: border-box;
+        cursor: grab;
+        user-select: none;
       }
 
       .hours-scroll::-webkit-scrollbar {
         display: none;
+      }
+
+      .hours-scroll.dragging {
+        cursor: grabbing;
       }
 
       .hours-row {
