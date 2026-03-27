@@ -130,10 +130,3 @@ If you want to help translate weather conditions into another language, please o
     'windy-variant': 'Windy',
   }
   ```
-
-## Development
-
-```bash
-npm install
-npm run build
-```
