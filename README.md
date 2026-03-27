@@ -107,6 +107,30 @@ I recommend placing the icon files in a folder inside the www folder.
 See [Home Assistant Weather Condition mapping](https://www.home-assistant.io/integrations/weather/#condition-mapping) for what filenames are required.
 It first tries `.svg`, then falls back to `.png`, and finally falls back to built-in Home Assistant icons if no local file exists.
 
+## Help with translation
+
+If you want to help translate weather conditions into another language, please open an issue or a pull request.
+
+```yaml
+  en: {
+    'clear-night': 'Clear night',
+    cloudy: 'Cloudy',
+    exceptional: 'Exceptional',
+    fog: 'Fog',
+    hail: 'Hail',
+    lightning: 'Lightning',
+    'lightning-rainy': 'Lightning rainy',
+    partlycloudy: 'Partly cloudy',
+    pouring: 'Pouring',
+    rainy: 'Rain',
+    snowy: 'Snow',
+    'snowy-rainy': 'Snowy rainy',
+    sunny: 'Sunny',
+    windy: 'Windy',
+    'windy-variant': 'Windy',
+  }
+  ```
+
 ## Development
 
 ```bash

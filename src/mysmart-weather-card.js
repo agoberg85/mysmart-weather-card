@@ -375,7 +375,7 @@ class MySmartWeatherCard extends LitElement {
   _formatTime(value) {
     const date = new Date(value);
 
-    return new Intl.DateTimeFormat(this.hass?.locale?.language || undefined, {
+    return new Intl.DateTimeFormat(this._localeForLanguage(), {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
