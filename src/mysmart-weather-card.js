@@ -740,6 +740,17 @@ class MySmartWeatherCard extends LitElement {
     this._expandedDailyKey = this._expandedDailyKey === dayKey ? '' : dayKey;
   }
 
+  _handleDailyCardClick(event, dayKey) {
+    const path = event.composedPath?.() || [];
+    const clickedInsideHours = path.some((node) => node instanceof HTMLElement && node.classList?.contains('daily-hours-shell'));
+
+    if (clickedInsideHours) {
+      return;
+    }
+
+    this._toggleDailyExpanded(dayKey);
+  }
+
   _handleDailyKeydown(event, dayKey) {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return;
@@ -758,13 +769,15 @@ class MySmartWeatherCard extends LitElement {
     const isExpanded = isExpandable && this._expandedDailyKey === dayKey;
 
     return html`
-      <div class="daily-card ${isExpanded ? 'expanded' : ''}">
+      <div
+        class="daily-card ${isExpanded ? 'expanded' : ''}"
+        @click=${isExpandable ? (event) => this._handleDailyCardClick(event, dayKey) : null}
+      >
         <div
           class="daily-summary ${isExpandable ? 'expandable' : ''}"
           role=${isExpandable ? 'button' : nothing}
           tabindex=${isExpandable ? '0' : '-1'}
           aria-expanded=${isExpandable ? String(isExpanded) : nothing}
-          @click=${isExpandable ? () => this._toggleDailyExpanded(dayKey) : null}
           @keydown=${isExpandable ? (event) => this._handleDailyKeydown(event, dayKey) : null}
         >
           <div class="daily-icon-block">
@@ -1058,6 +1071,9 @@ class MySmartWeatherCard extends LitElement {
       .hours-scroll {
         overflow-x: auto;
         overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        touch-action: pan-x;
         margin: 0 -12px -6px;
         padding: 2px 12px 6px var(--hourly-start-padding);
         scrollbar-width: none;
@@ -1161,7 +1177,14 @@ class MySmartWeatherCard extends LitElement {
       .current-details-shell > *,
       .daily-hours-shell > * {
         min-height: 0;
+      }
+
+      .current-details-shell > * {
         overflow: hidden;
+      }
+
+      .daily-hours-shell > * {
+        overflow-y: hidden;
       }
 
       .current-details-shell.expanded,
