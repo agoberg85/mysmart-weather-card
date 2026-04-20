@@ -14,7 +14,7 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 
 - **Three display modes:** `hourly`, `current`, and `daily`.
 - **Scrollable hourly forecast:** Great for dashboard popups and compact weather views.
-- **Localized labels:** Supports English, Norwegian, and German condition and weekday names. Let me know if you want to help with translation.
+- **Localized labels:** Supports English, Norwegian, and German for conditions, weekdays, wind labels, and current-mode detail labels.
 - **Optional local icon pack:** Use your own condition-based icon files via `icon_path`.
 - **Popup-friendly layout hack:** Optional `hourly_width_offset` for hourly rows inside modals/popups.
 - **Visual editor support:** Main options are available directly in the Home Assistant UI editor.
@@ -84,7 +84,7 @@ icon_path: /local/weather_icons/met
 | `mode` | string | Optional | `hourly`, `current`, or `daily`. | `hourly` |
 | `title` | string | Optional | Card title. In `current` mode this is shown inside the card. | `''` |
 | `show_title` | boolean | Optional | Show or hide the title. | `true` |
-| `language` | string | Optional | Language for condition labels and weekday names in `current`/`daily` modes. Supported: `en`, `no`, `de`. | `en` |
+| `language` | string | Optional | Language override for translated labels. Supported: `en`, `no`, `de`. Leave empty to follow the Home Assistant frontend locale automatically. | `auto` |
 | `hours_to_show` | number | Optional | Number of hourly forecast entries to display in `hourly` mode. | `24` |
 | `hourly_width_offset` | number | Optional | Extra width hack for `hourly` mode, useful inside popups. | `0` |
 | `skip_first` | boolean | Optional | Skip the first item in `daily` mode. | `false` |
@@ -109,24 +109,29 @@ It first tries `.svg`, then falls back to `.png`, and finally falls back to buil
 
 ## Help with translation
 
-If you want to help translate weather conditions into another language, please open an issue or a pull request.
+If you want to help translate the card into another language, please open an issue or a pull request.
 
-```yaml
-  en: {
-    'clear-night': 'Clear night',
-    cloudy: 'Cloudy',
-    exceptional: 'Exceptional',
-    fog: 'Fog',
-    hail: 'Hail',
-    lightning: 'Lightning',
-    'lightning-rainy': 'Lightning rainy',
-    partlycloudy: 'Partly cloudy',
-    pouring: 'Pouring',
-    rainy: 'Rain',
-    snowy: 'Snow',
-    'snowy-rainy': 'Snowy rainy',
-    sunny: 'Sunny',
-    windy: 'Windy',
-    'windy-variant': 'Windy',
-  }
-  ```
+Translations now live in separate files:
+
+- `src/locales/en.js`
+- `src/locales/no.js`
+- `src/locales/de.js`
+
+Each locale file contains:
+
+- weather condition labels
+- wind strength labels
+- wind direction labels
+- current mode detail labels
+- small UI strings
+
+To add a new language:
+
+1. Copy one of the existing locale files in `src/locales/`.
+2. Translate the values.
+3. Import the new file in `src/locales/index.js`.
+4. Add the language to `LOCALES`.
+5. Update `resolveLanguageKey()` if you want automatic Home Assistant locale mapping for that language.
+6. Add the new option to the card editor if you want it selectable manually.
+
+If `language` is not set in the card config, the card will automatically follow the Home Assistant frontend language when possible.

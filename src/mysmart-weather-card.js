@@ -1,4 +1,5 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
+import { LOCALES, resolveLanguageKey } from './locales/index.js';
 
 const CONDITION_ICONS = {
   'clear-night': 'mdi:weather-night',
@@ -18,59 +19,16 @@ const CONDITION_ICONS = {
   'windy-variant': 'mdi:weather-windy-variant',
 };
 
-const CONDITION_TRANSLATIONS = {
-  en: {
-    'clear-night': 'Clear night',
-    cloudy: 'Cloudy',
-    exceptional: 'Exceptional',
-    fog: 'Fog',
-    hail: 'Hail',
-    lightning: 'Lightning',
-    'lightning-rainy': 'Lightning rainy',
-    partlycloudy: 'Partly cloudy',
-    pouring: 'Pouring',
-    rainy: 'Rain',
-    snowy: 'Snow',
-    'snowy-rainy': 'Snowy rainy',
-    sunny: 'Sunny',
-    windy: 'Windy',
-    'windy-variant': 'Windy',
-  },
-  no: {
-    'clear-night': 'Klar natt',
-    cloudy: 'Overskyet',
-    exceptional: 'Ekstrem',
-    fog: 'Tåke',
-    hail: 'Hagl',
-    lightning: 'Lyn',
-    'lightning-rainy': 'Tordenregn',
-    partlycloudy: 'Delvis skyet',
-    pouring: 'Pøsregn',
-    rainy: 'Regn',
-    snowy: 'Snø',
-    'snowy-rainy': 'Sludd',
-    sunny: 'Sol',
-    windy: 'Vind',
-    'windy-variant': 'Vind',
-  },
-  de: {
-    'clear-night': 'Klare Nacht',
-    cloudy: 'Bewölkt',
-    exceptional: 'Extrem',
-    fog: 'Nebel',
-    hail: 'Hagel',
-    lightning: 'Gewitter',
-    'lightning-rainy': 'Gewitterregen',
-    partlycloudy: 'Teilweise bewölkt',
-    pouring: 'Starkregen',
-    rainy: 'Regen',
-    snowy: 'Schnee',
-    'snowy-rainy': 'Schneeregen',
-    sunny: 'Sonnig',
-    windy: 'Windig',
-    'windy-variant': 'Windig',
-  },
-};
+const WIND_DIRECTION_ICONS = [
+  'mdi:arrow-up',
+  'mdi:arrow-top-right',
+  'mdi:arrow-right',
+  'mdi:arrow-bottom-right',
+  'mdi:arrow-down',
+  'mdi:arrow-bottom-left',
+  'mdi:arrow-left',
+  'mdi:arrow-top-left',
+];
 
 class MySmartWeatherCard extends LitElement {
   static get properties() {
@@ -78,19 +36,25 @@ class MySmartWeatherCard extends LitElement {
       hass: {},
       config: {},
       _forecast: { state: true },
+      _dailyHourlyForecast: { state: true },
       _loading: { state: true },
       _error: { state: true },
+      _currentExpanded: { state: true },
+      _expandedDailyKey: { state: true },
     };
   }
 
   constructor() {
     super();
     this._forecast = [];
+    this._dailyHourlyForecast = [];
     this._loading = false;
     this._error = '';
     this._lastFetchAt = 0;
     this._lastEntityVersion = '';
     this._requestToken = 0;
+    this._currentExpanded = false;
+    this._expandedDailyKey = '';
     this._dragScrollActive = false;
     this._dragScrollMoved = false;
     this._dragPointerId = null;
@@ -114,7 +78,7 @@ class MySmartWeatherCard extends LitElement {
       mode: 'hourly',
       title: '',
       show_title: true,
-      language: 'en',
+      language: '',
       hours_to_show: 24,
       hourly_width_offset: 0,
       skip_first: false,
@@ -168,6 +132,7 @@ class MySmartWeatherCard extends LitElement {
             select: {
               mode: 'dropdown',
               options: [
+                { value: '', label: 'Auto (Home Assistant locale)' },
                 { value: 'en', label: 'English' },
                 { value: 'no', label: 'Norwegian' },
                 { value: 'de', label: 'German' },
@@ -234,7 +199,7 @@ class MySmartWeatherCard extends LitElement {
         }
 
         if (schema.name === 'language') {
-          return 'Condition label language for current and daily mode.';
+          return 'Optional language override. Leave on Auto to follow the Home Assistant frontend locale.';
         }
 
         if (schema.name === 'hourly_width_offset') {
@@ -302,7 +267,9 @@ class MySmartWeatherCard extends LitElement {
 
     if (!stateObj) {
       this._forecast = [];
-      this._error = `Entity not found: ${this.config.entity}`;
+      this._dailyHourlyForecast = [];
+      this._expandedDailyKey = '';
+      this._error = `${this._localizeUi('entity_not_found', 'Entity not found')}: ${this.config.entity}`;
       return;
     }
 
@@ -323,28 +290,38 @@ class MySmartWeatherCard extends LitElement {
     const token = ++this._requestToken;
 
     try {
-      const forecastType = this.config.mode === 'daily' ? 'daily' : 'hourly';
-      const response = await this.hass.callApi(
-        'post',
-        'services/weather/get_forecasts?return_response',
-        {
-          entity_id: this.config.entity,
-          type: forecastType,
+      if (this.config.mode === 'daily') {
+        const [dailyResult, hourlyResult] = await Promise.allSettled([
+          this._fetchForecastByType('daily'),
+          this._fetchForecastByType('hourly'),
+        ]);
+
+        if (token !== this._requestToken) {
+          return;
         }
-      );
 
-      if (token !== this._requestToken) {
-        return;
+        if (dailyResult.status !== 'fulfilled') {
+          throw dailyResult.reason;
+        }
+
+        this._forecast = dailyResult.value;
+        this._dailyHourlyForecast = hourlyResult.status === 'fulfilled' ? hourlyResult.value : [];
+
+        if (hourlyResult.status !== 'fulfilled') {
+          console.warn('[MySmart Weather Card] Failed to load nested daily hourly forecast', hourlyResult.reason);
+        }
+      } else {
+        const forecast = await this._fetchForecastByType('hourly');
+
+        if (token !== this._requestToken) {
+          return;
+        }
+
+        this._forecast = forecast;
+        this._dailyHourlyForecast = [];
+        this._expandedDailyKey = '';
       }
 
-      const payload = response?.service_response || response || {};
-      const forecast = payload?.[this.config.entity]?.forecast;
-
-      if (!Array.isArray(forecast)) {
-        throw new Error('No hourly forecast data returned from weather.get_forecasts');
-      }
-
-      this._forecast = forecast;
       this._lastFetchAt = now;
       this._lastEntityVersion = entityVersion;
     } catch (error) {
@@ -354,6 +331,8 @@ class MySmartWeatherCard extends LitElement {
 
       console.error('[MySmart Weather Card] Failed to load forecast', error);
       this._forecast = [];
+      this._dailyHourlyForecast = [];
+      this._expandedDailyKey = '';
       this._error = error?.message || 'Unable to load hourly forecast';
     } finally {
       if (token === this._requestToken) {
@@ -362,14 +341,24 @@ class MySmartWeatherCard extends LitElement {
     }
   }
 
-  _chunkForecast(items, size) {
-    const groups = [];
+  async _fetchForecastByType(type) {
+    const response = await this.hass.callApi(
+      'post',
+      'services/weather/get_forecasts?return_response',
+      {
+        entity_id: this.config.entity,
+        type,
+      }
+    );
 
-    for (let index = 0; index < items.length; index += size) {
-      groups.push(items.slice(index, index + size));
+    const payload = response?.service_response || response || {};
+    const forecast = payload?.[this.config.entity]?.forecast;
+
+    if (!Array.isArray(forecast)) {
+      throw new Error(`No ${type} forecast data returned from weather.get_forecasts`);
     }
 
-    return groups;
+    return forecast;
   }
 
   _formatTime(value) {
@@ -383,7 +372,7 @@ class MySmartWeatherCard extends LitElement {
   }
 
   _localeForLanguage() {
-    const language = this.config?.language || 'en';
+    const language = this._getResolvedLanguageKey();
 
     if (language === 'no') {
       return 'nb-NO';
@@ -394,20 +383,6 @@ class MySmartWeatherCard extends LitElement {
     }
 
     return 'en-US';
-  }
-
-  _formatGroupTitle(group) {
-    if (!group.length) {
-      return '';
-    }
-
-    const date = new Date(group[0].datetime);
-
-    return new Intl.DateTimeFormat(this._localeForLanguage(), {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    }).format(date);
   }
 
   _formatValue(value, digits = 1) {
@@ -437,9 +412,8 @@ class MySmartWeatherCard extends LitElement {
       return '';
     }
 
-    const language = this.config?.language || 'en';
-    const translation = CONDITION_TRANSLATIONS[language]?.[condition]
-      || CONDITION_TRANSLATIONS.en?.[condition];
+    const translation = this._getLocaleData().conditions?.[condition]
+      || LOCALES.en.conditions?.[condition];
 
     if (translation) {
       return translation;
@@ -474,6 +448,101 @@ class MySmartWeatherCard extends LitElement {
     }
 
     return numeric;
+  }
+
+  _windSpeedInMetersPerSecond(speed, unit) {
+    if (speed === null || speed === undefined || Number.isNaN(Number(speed))) {
+      return null;
+    }
+
+    const numeric = Number(speed);
+    const normalizedUnit = (unit || '').toLowerCase();
+
+    if (normalizedUnit.includes('km/h')) {
+      return numeric / 3.6;
+    }
+
+    if (normalizedUnit.includes('mph')) {
+      return numeric * 0.44704;
+    }
+
+    return numeric;
+  }
+
+  _getWindStrengthLabel(speed, unit) {
+    const speedKmh = this._windSpeedInKmh(speed, unit);
+
+    if (speedKmh === null) {
+      return '-';
+    }
+
+    const labels = this._getLocaleData().wind_strength || LOCALES.en.wind_strength;
+    const match = labels.find(([min, max]) => speedKmh >= min && speedKmh <= max);
+
+    return match?.[2] || labels[labels.length - 1]?.[2] || '-';
+  }
+
+  _getWindDirectionLabel(bearing) {
+    if (bearing === null || bearing === undefined || Number.isNaN(Number(bearing))) {
+      return '-';
+    }
+
+    const directions = this._getLocaleData().wind_direction || LOCALES.en.wind_direction;
+    const index = this._getWindDirectionIndex(bearing);
+
+    return directions[index] || '-';
+  }
+
+  _getWindDirectionIndex(bearing) {
+    if (bearing === null || bearing === undefined || Number.isNaN(Number(bearing))) {
+      return null;
+    }
+
+    const normalizedBearing = ((Number(bearing) % 360) + 360) % 360;
+    return Math.round(normalizedBearing / 45) % 8;
+  }
+
+  _renderWindDirectionValue(bearing) {
+    const index = this._getWindDirectionIndex(bearing);
+    const label = this._getWindDirectionLabel(bearing);
+
+    if (index === null) {
+      return label;
+    }
+
+    return html`
+      <span class="current-direction-value">
+        <ha-icon class="current-direction-icon" .icon=${WIND_DIRECTION_ICONS[index]}></ha-icon>
+        <span>${label}</span>
+      </span>
+    `;
+  }
+
+  _getDetailLabel(key) {
+    const labels = this._getLocaleData().current_details || LOCALES.en.current_details;
+    return labels[key] || key;
+  }
+
+  _getResolvedLanguageKey() {
+    return resolveLanguageKey(this.config?.language, this.hass?.locale?.language);
+  }
+
+  _getLocaleData() {
+    return LOCALES[this._getResolvedLanguageKey()] || LOCALES.en;
+  }
+
+  _localizeUi(key, fallback = '') {
+    return this._getLocaleData().ui?.[key] || LOCALES.en.ui?.[key] || fallback;
+  }
+
+  _formatWindDisplay(speed, unit) {
+    const speedMetersPerSecond = this._windSpeedInMetersPerSecond(speed, unit);
+
+    if (speedMetersPerSecond === null) {
+      return '-';
+    }
+
+    return `${this._formatValue(speedMetersPerSecond)}m/s`;
   }
 
   _calculateFeelsLike(item, units) {
@@ -547,19 +616,20 @@ class MySmartWeatherCard extends LitElement {
     console.warn('[MySmart Weather Card] Icon not found for condition:', image.alt, image.src);
   }
 
-  _renderHour(item, units) {
+  _renderHour(item, units, options = {}) {
     const temperature = item.temperature ?? item.templow;
     const precipitation = item.precipitation ?? 0;
+    const cardClass = options.nested ? 'hour-card hour-card--nested' : 'hour-card';
 
     return html`
-      <div class="hour-card">
+      <div class=${cardClass}>
         <div class="hour-time">${this._formatTime(item.datetime)}</div>
         ${this._renderIcon(item)}
         <div class="hour-temp">
           ${this._formatValue(temperature)}${units.temperature}
         </div>
         <div class="hour-meta">
-          ${this._formatValue(item.wind_speed)}${units.wind}
+          ${this._formatWindDisplay(item.wind_speed, units.wind)}
         </div>
         <div class="hour-meta">
           ${this._formatValue(precipitation)}${units.precipitation}
@@ -571,56 +641,168 @@ class MySmartWeatherCard extends LitElement {
   _renderCurrent(item, units) {
     const temperature = item.temperature ?? item.templow;
     const feelsLike = this._calculateFeelsLike(item, units);
-    const precipitation = item.precipitation ?? 0;
     const showTitle = this.config.show_title !== false;
+    const isExpanded = this._currentExpanded;
+    const gust = item.wind_gust_speed ?? null;
+    const windValue = gust !== null && gust !== undefined
+      ? html`
+          ${this._formatWindDisplay(item.wind_speed, units.wind)}
+          <span class="current-detail-secondary">(${this._formatWindDisplay(gust, units.wind)})</span>
+        `
+      : this._formatWindDisplay(item.wind_speed, units.wind);
+    const rainValue = html`
+      ${this._formatValue(item.precipitation ?? 0)}${units.precipitation}
+      <span class="current-detail-secondary">(${this._formatValue(item.precipitation_probability ?? 0)}%)</span>
+    `;
+    const details = [
+      { key: 'rain', value: rainValue },
+      { key: 'wind_direction', value: this._renderWindDirectionValue(item.wind_bearing) },
+      { key: 'wind_speed', value: windValue },
+      { key: 'humidity', value: `${this._formatValue(item.humidity ?? 0)}%` },
+      { key: 'uv_index', value: this._formatValue(item.uv_index ?? 0) },
+      { key: 'cloud_coverage', value: `${this._formatValue(item.cloud_coverage ?? 0)}%` },
+    ];
 
     return html`
-      <div class="current-card">
-        <div class="current-main">
-          ${showTitle ? html`<div class="current-title">${this.config.title || 'Current weather'}</div>` : ''}
-          <div class="current-temp-row">
-            <div class="current-temp">${this._formatValue(temperature)}${units.temperature}</div>
-            ${feelsLike !== null ? html`<div class="current-feels">${this._formatValue(feelsLike)}${units.temperature}</div>` : ''}
+      <div
+        class="current-card ${isExpanded ? 'expanded' : ''}"
+        role="button"
+        tabindex="0"
+        aria-expanded=${String(isExpanded)}
+        @click=${this._toggleCurrentExpanded}
+        @keydown=${this._handleCurrentKeydown}
+      >
+        <div class="current-summary">
+          <div class="current-main">
+            ${showTitle ? html`<div class="current-title">${this.config.title || this._localizeUi('current_weather', 'Current weather')}</div>` : ''}
+            <div class="current-temp-row">
+              <div class="current-temp">${this._formatValue(temperature)}${units.temperature}</div>
+              ${feelsLike !== null ? html`<div class="current-feels">${this._formatValue(feelsLike)}${units.temperature}</div>` : ''}
+            </div>
+            <div class="current-meta-row">
+              <span class="current-condition">${this._formatConditionLabel(item.condition)}</span>
+              <span class="current-meta">${this._getWindStrengthLabel(item.wind_speed, units.wind)}</span>
+            </div>
           </div>
-          <div class="current-meta-row">
-            <span class="current-condition">${this._formatConditionLabel(item.condition)}</span>
-            <span class="current-meta">${this._formatValue(item.wind_speed)}${units.wind}</span>
-            <span class="current-meta">${this._formatValue(precipitation)}${units.precipitation}</span>
+          <div class="current-icon-block">
+            ${this._renderIcon(item)}
           </div>
         </div>
-        <div class="current-icon-block">
-          ${this._renderIcon(item)}
+        <div class="current-details-shell ${isExpanded ? 'expanded' : ''}">
+          <div class="current-details-grid">
+            ${details.map((detail) => html`
+              <div class="current-detail-item">
+                <div class="current-detail-label">${this._getDetailLabel(detail.key)}</div>
+                <div class="current-detail-value">${detail.value}</div>
+              </div>
+            `)}
+          </div>
+        </div>
+        <div class="current-expand-indicator" aria-hidden="true">
+          <ha-icon
+            class="current-expand-icon"
+            .icon=${'mdi:chevron-down'}
+          ></ha-icon>
         </div>
       </div>
     `;
+  }
+
+  _toggleCurrentExpanded() {
+    this._currentExpanded = !this._currentExpanded;
+  }
+
+  _handleCurrentKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    this._toggleCurrentExpanded();
+  }
+
+  _getDayKey(value) {
+    const date = new Date(value);
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  }
+
+  _getDailyHourlyItems(item) {
+    const dayKey = this._getDayKey(item.datetime);
+
+    return this._dailyHourlyForecast.filter((hourItem) => this._getDayKey(hourItem.datetime) === dayKey);
+  }
+
+  _toggleDailyExpanded(dayKey) {
+    this._expandedDailyKey = this._expandedDailyKey === dayKey ? '' : dayKey;
+  }
+
+  _handleDailyKeydown(event, dayKey) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    this._toggleDailyExpanded(dayKey);
   }
 
   _renderDaily(item, units) {
     const feelsLike = this._calculateFeelsLike(item, units);
     const precipitation = item.precipitation ?? 0;
+    const dayKey = this._getDayKey(item.datetime);
+    const hourlyItems = this._getDailyHourlyItems(item);
+    const isExpandable = hourlyItems.length > 0;
+    const isExpanded = isExpandable && this._expandedDailyKey === dayKey;
 
     return html`
-      <div class="daily-card">
-        <div class="daily-main">
-          <div class="daily-day">${this._formatDayLabel(item.datetime)}</div>
-          <div class="daily-temp-row">
-            <div class="daily-temp">${this._formatValue(item.temperature)}${units.temperature}</div>
-            ${feelsLike !== null ? html`<div class="daily-feels">${this._formatValue(feelsLike)}${units.temperature}</div>` : ''}
+      <div class="daily-card ${isExpanded ? 'expanded' : ''}">
+        <div
+          class="daily-summary ${isExpandable ? 'expandable' : ''}"
+          role=${isExpandable ? 'button' : nothing}
+          tabindex=${isExpandable ? '0' : '-1'}
+          aria-expanded=${isExpandable ? String(isExpanded) : nothing}
+          @click=${isExpandable ? () => this._toggleDailyExpanded(dayKey) : null}
+          @keydown=${isExpandable ? (event) => this._handleDailyKeydown(event, dayKey) : null}
+        >
+          <div class="daily-icon-block">
+            ${this._renderIcon(item)}
           </div>
-          <div class="daily-meta-row">
-            <span class="daily-condition">${this._formatConditionLabel(item.condition)}</span>
-            <span class="daily-meta">${this._formatValue(precipitation)}${units.precipitation}</span>
+          <div class="daily-main">
+            <div class="daily-day">${this._formatDayLabel(item.datetime)}</div>
+            <div class="daily-meta-row">
+              <span class="daily-condition">${this._formatConditionLabel(item.condition)}</span>
+              <span class="daily-meta">${this._formatValue(precipitation)}${units.precipitation}</span>
+            </div>
+          </div>
+          <div class="daily-temp-block">
+            <div class="daily-temp-row">
+              <div class="daily-temp">${this._formatValue(item.temperature)}${units.temperature}</div>
+              ${feelsLike !== null ? html`<div class="daily-feels">${this._formatValue(feelsLike)}${units.temperature}</div>` : ''}
+            </div>
           </div>
         </div>
-        <div class="daily-icon-block">
-          ${this._renderIcon(item)}
-        </div>
+        ${isExpandable ? html`
+          <div class="daily-hours-shell ${isExpanded ? 'expanded' : ''}">
+            ${this._renderHourlyContent(hourlyItems, units, { nested: true })}
+          </div>
+        ` : ''}
+        ${isExpandable ? html`
+          <div class="daily-expand-indicator" aria-hidden="true">
+            <ha-icon
+              class="current-expand-icon"
+              .icon=${'mdi:chevron-down'}
+            ></ha-icon>
+          </div>
+        ` : ''}
       </div>
     `;
   }
 
   _startDragScroll(event) {
-    if (this.config.mode !== 'hourly' || event.pointerType !== 'mouse' || event.button !== 0) {
+    if (event.pointerType !== 'mouse' || event.button !== 0) {
       return;
     }
 
@@ -687,6 +869,118 @@ class MySmartWeatherCard extends LitElement {
     this._dragPointerId = null;
   }
 
+  _renderHourlyContent(items, units, options = {}) {
+    const scrollClass = options.nested ? 'hours-scroll hours-scroll--nested' : 'hours-scroll';
+    const rowClass = options.nested ? 'hours-row hours-row--nested' : 'hours-row';
+
+    return html`
+      <div
+        class=${scrollClass}
+        @pointerdown=${this._startDragScroll}
+        @pointermove=${this._moveDragScroll}
+        @pointerup=${this._endDragScroll}
+        @pointercancel=${this._endDragScroll}
+        @pointerleave=${this._endDragScroll}
+        @click=${this._handleDragClick}
+      >
+        <div class=${rowClass}>
+          ${items.map((item) => this._renderHour(item, units, options))}
+        </div>
+      </div>
+    `;
+  }
+
+  _getDisplayUnits(stateObj) {
+    return {
+      temperature: this._formatTemperatureUnit(stateObj.attributes.temperature_unit || '°'),
+      wind: stateObj.attributes.wind_speed_unit || '',
+      precipitation: stateObj.attributes.precipitation_unit || 'mm',
+    };
+  }
+
+  _getModeState() {
+    return {
+      isCurrent: this.config.mode === 'current',
+      isDaily: this.config.mode === 'daily',
+      isHourly: this.config.mode === 'hourly',
+    };
+  }
+
+  _getHourlyItems() {
+    return this._forecast.slice(0, this.config.hours_to_show || 24);
+  }
+
+  _getDailyItems() {
+    return this.config.skip_first ? this._forecast.slice(1) : this._forecast;
+  }
+
+  _getCardStyle(modeState) {
+    const { isCurrent, isDaily, isHourly } = modeState;
+    const effectiveCardBackground = (isCurrent || isDaily) ? 'none' : this.config.card_background;
+    const hourlyWidthOffset = Math.max(0, Number(this.config.hourly_width_offset) || 0);
+    const hourlyLeftBleed = isHourly && hourlyWidthOffset ? Math.round(hourlyWidthOffset / 2) : 0;
+
+    return [
+      effectiveCardBackground ? `background: ${effectiveCardBackground};` : '',
+      isHourly && hourlyWidthOffset ? `margin: 0 0 0 ${-hourlyLeftBleed}px;` : '',
+      isHourly && hourlyWidthOffset ? `width: calc(100% + ${hourlyWidthOffset}px);` : '',
+      isHourly && hourlyWidthOffset ? '--ha-card-border-radius: 0px;' : '',
+    ].filter(Boolean).join(' ');
+  }
+
+  _getShellStyle(modeState) {
+    const { isCurrent, isDaily, isHourly } = modeState;
+    const effectiveCardBackground = (isCurrent || isDaily) ? 'none' : this.config.card_background;
+    const hourlyWidthOffset = Math.max(0, Number(this.config.hourly_width_offset) || 0);
+    const hourlyLeftBleed = isHourly && hourlyWidthOffset ? Math.round(hourlyWidthOffset / 2) : 0;
+
+    return [
+      this.config.background_color ? `--forecast-surface: ${this.config.background_color};` : '',
+      effectiveCardBackground === 'none' ? '--card-shell-padding: 12px 0;' : '',
+      isHourly && hourlyWidthOffset ? `--hourly-end-padding: ${hourlyLeftBleed}px;` : '',
+      isHourly && hourlyWidthOffset ? `--hourly-start-padding: ${12 + hourlyLeftBleed}px;` : '',
+    ].filter(Boolean).join(' ');
+  }
+
+  _renderStatusMessage(message, isError = false) {
+    return html`<div class="message ${isError ? 'error' : ''}">${message}</div>`;
+  }
+
+  _renderDailyContent(items, units) {
+    return html`
+      <div class="daily-list">
+        ${items.map((item) => this._renderDaily(item, units))}
+      </div>
+    `;
+  }
+
+  _renderModeContent(modeState, units) {
+    const { isCurrent, isDaily } = modeState;
+    const hourlyItems = this._getHourlyItems();
+    const dailyItems = this._getDailyItems();
+    const currentItem = this._forecast[0];
+
+    if (this._loading && !this._forecast.length) {
+      return this._renderStatusMessage(this._localizeUi('loading_forecast', 'Loading forecast...'));
+    }
+
+    if (isCurrent) {
+      return currentItem
+        ? this._renderCurrent(currentItem, units)
+        : this._renderStatusMessage(this._localizeUi('no_current_data', 'No current forecast data available.'));
+    }
+
+    if (isDaily) {
+      return dailyItems.length
+        ? this._renderDailyContent(dailyItems, units)
+        : this._renderStatusMessage(this._localizeUi('no_daily_data', 'No daily forecast data available.'));
+    }
+
+    return hourlyItems.length
+      ? this._renderHourlyContent(hourlyItems, units)
+      : this._renderStatusMessage(this._localizeUi('no_forecast_data', 'No forecast data available.'));
+  }
+
   render() {
     if (!this.config || !this.hass) {
       return html``;
@@ -697,39 +991,17 @@ class MySmartWeatherCard extends LitElement {
     if (!stateObj) {
       return html`
         <ha-card>
-          <div class="message">Entity not found: ${this.config.entity}</div>
+          <div class="message">${this._localizeUi('entity_not_found', 'Entity not found')}: ${this.config.entity}</div>
         </ha-card>
       `;
     }
 
-    const forecastItems = this._forecast.slice(0, this.config.hours_to_show || 24);
-    const units = {
-      temperature: this._formatTemperatureUnit(stateObj.attributes.temperature_unit || '°'),
-      wind: stateObj.attributes.wind_speed_unit || '',
-      precipitation: stateObj.attributes.precipitation_unit || 'mm',
-    };
+    const modeState = this._getModeState();
+    const units = this._getDisplayUnits(stateObj);
     const title = this.config.title || stateObj.attributes.friendly_name || 'Hourly forecast';
     const showTitle = this.config.show_title !== false;
-    const isCurrent = this.config.mode === 'current';
-    const isDaily = this.config.mode === 'daily';
-    const isHourly = this.config.mode === 'hourly';
-    const currentItem = this._forecast[0];
-    const dailyItems = isDaily && this.config.skip_first ? this._forecast.slice(1) : this._forecast;
-    const effectiveCardBackground = (isCurrent || isDaily) ? 'none' : this.config.card_background;
-    const hourlyWidthOffset = Math.max(0, Number(this.config.hourly_width_offset) || 0);
-    const hourlyLeftBleed = isHourly && hourlyWidthOffset ? Math.round(hourlyWidthOffset / 2) : 0;
-    const haCardStyle = [
-      effectiveCardBackground ? `background: ${effectiveCardBackground};` : '',
-      isHourly && hourlyWidthOffset ? `margin: 0 0 0 ${-hourlyLeftBleed}px;` : '',
-      isHourly && hourlyWidthOffset ? `width: calc(100% + ${hourlyWidthOffset}px);` : '',
-      isHourly && hourlyWidthOffset ? '--ha-card-border-radius: 0px;' : '',
-    ].filter(Boolean).join(' ');
-    const shellStyle = [
-      this.config.background_color ? `--forecast-surface: ${this.config.background_color};` : '',
-      effectiveCardBackground === 'none' ? '--card-shell-padding: 12px 0;' : '',
-      isHourly && hourlyWidthOffset ? `--hourly-end-padding: ${hourlyLeftBleed}px;` : '',
-      isHourly && hourlyWidthOffset ? `--hourly-start-padding: ${12 + hourlyLeftBleed}px;` : '',
-    ].filter(Boolean).join(' ');
+    const haCardStyle = this._getCardStyle(modeState);
+    const shellStyle = this._getShellStyle(modeState);
 
     return html`
       <ha-card style=${haCardStyle}>
@@ -737,41 +1009,13 @@ class MySmartWeatherCard extends LitElement {
           class="card-shell"
           style=${shellStyle}
         >
-          ${showTitle && !isCurrent ? html`<div class="card-header">${title}</div>` : ''}
+          ${showTitle && !modeState.isCurrent ? html`<div class="card-header">${title}</div>` : ''}
 
           ${this._error
-            ? html`<div class="message error">${this._error}</div>`
+            ? this._renderStatusMessage(this._error, true)
             : ''}
 
-          ${this._loading && !this._forecast.length
-            ? html`<div class="message">Loading forecast...</div>`
-            : isCurrent && !currentItem
-              ? html`<div class="message">No current forecast data available.</div>`
-            : isDaily && !dailyItems.length
-              ? html`<div class="message">No daily forecast data available.</div>`
-            : !isCurrent && !this._forecast.length
-              ? html`<div class="message">No forecast data available.</div>`
-            : isCurrent ? html`
-                ${this._renderCurrent(currentItem, units)}
-              ` : isDaily ? html`
-                <div class="daily-list">
-                  ${dailyItems.map((item) => this._renderDaily(item, units))}
-                </div>
-              ` : html`
-                <div
-                  class="hours-scroll"
-                  @pointerdown=${this._startDragScroll}
-                  @pointermove=${this._moveDragScroll}
-                  @pointerup=${this._endDragScroll}
-                  @pointercancel=${this._endDragScroll}
-                  @pointerleave=${this._endDragScroll}
-                  @click=${this._handleDragClick}
-                >
-                  <div class="hours-row">
-                    ${forecastItems.map((item) => this._renderHour(item, units))}
-                  </div>
-                </div>
-              `}
+          ${this._renderModeContent(modeState, units)}
         </div>
       </ha-card>
     `;
@@ -858,22 +1102,87 @@ class MySmartWeatherCard extends LitElement {
         box-sizing: border-box;
       }
 
+      .hour-card--nested {
+        width: 64px;
+        min-height: 108px;
+        background: transparent;
+        border-color: transparent;
+        border-radius: 16px;
+        gap: 4px;
+        padding: 8px 4px 6px;
+      }
+
       .current-card,
       .daily-card {
         background: var(--forecast-surface);
         border: 1px solid var(--forecast-border);
         border-radius: 26px;
         color: var(--forecast-text);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
         box-sizing: border-box;
       }
 
       .current-card {
         min-height: 170px;
-        padding: 20px 24px;
+        padding: 20px 24px 12px 24px;
+        display: grid;
+        gap: 0;
+        cursor: pointer;
+        transition: border-color 220ms ease, background-color 220ms ease;
+      }
+
+      .current-card:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
+      }
+
+      .current-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .current-card.expanded {
+        gap: 18px;
+      }
+
+      .current-details-shell,
+      .daily-hours-shell {
+        display: grid;
+        grid-template-rows: 0fr;
+        opacity: 0;
+        transform: translateY(-6px);
+        transition:
+          grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1),
+          opacity 240ms ease,
+          transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .current-details-shell > *,
+      .daily-hours-shell > * {
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .current-details-shell.expanded,
+      .daily-hours-shell.expanded {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .current-details-grid {
+        opacity: 0;
+        transform: translateY(-8px);
+        transition:
+          opacity 200ms ease,
+          transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .current-details-shell.expanded .current-details-grid {
+        opacity: 1;
+        transform: translateY(0);
+        transition-delay: 40ms;
       }
 
       .daily-list {
@@ -882,8 +1191,28 @@ class MySmartWeatherCard extends LitElement {
       }
 
       .daily-card {
-        min-height: 132px;
-        padding: 20px 24px;
+        padding: 12px 24px;
+        display: grid;
+      }
+
+      .daily-card.expanded {
+        padding-bottom: 8px;
+      }
+
+      .daily-summary {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        column-gap: 18px;
+      }
+
+      .daily-summary.expandable {
+        cursor: pointer;
+      }
+
+      .daily-summary.expandable:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
       }
 
       .current-main,
@@ -893,7 +1222,7 @@ class MySmartWeatherCard extends LitElement {
       }
 
       .current-main {gap: 12px}
-      .daily-main {gap: 8px}
+      .daily-main {gap: 6px}
 
       .current-title,
       .daily-day {
@@ -912,6 +1241,14 @@ class MySmartWeatherCard extends LitElement {
         display: flex;
         align-items: baseline;
         gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .daily-temp-block {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
       }
 
       .current-temp {
@@ -920,7 +1257,7 @@ class MySmartWeatherCard extends LitElement {
         line-height: 0.95;
       }
 
-      .current-low {
+      .current-feels {
         color: var(--forecast-muted);
         font-size: 16px;
         font-weight: 400;
@@ -932,7 +1269,7 @@ class MySmartWeatherCard extends LitElement {
         display: flex;
         flex-wrap: wrap;
         gap: 14px;
-        color: var(--forecast-muted);
+        color: var(--forecast-text);
         font-size: 1em;
         line-height: 1.2;
       }
@@ -941,6 +1278,86 @@ class MySmartWeatherCard extends LitElement {
       .daily-condition {
         color: var(--forecast-text);
         font-weight: 500;
+      }
+
+      .current-details-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 20px;
+        padding-top: 4px;
+        padding-bottom: 2px;
+      }
+
+      .current-detail-item {
+        min-width: 0;
+        display: grid;
+        gap: 6px;
+      }
+
+      .current-detail-label {
+        color: var(--forecast-muted);
+        font-size: 0.72em;
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .current-detail-value {
+        color: var(--forecast-text);
+        font-size: 1.42em;
+        font-weight: 500;
+        line-height: 1.05;
+        text-wrap: balance;
+      }
+
+      .current-detail-secondary {
+        color: var(--forecast-muted);
+        font-size: 0.68em;
+        font-weight: 500;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .current-direction-value {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .current-direction-icon {
+        --mdc-icon-size: 0.92em;
+        color: var(--forecast-muted);
+        flex: 0 0 auto;
+      }
+
+      .current-expand-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--forecast-muted);
+        line-height: 1;
+        min-height: 16px;
+      }
+
+      .daily-expand-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--forecast-muted);
+        line-height: 1;
+        min-height: 16px;
+      }
+
+      .current-expand-icon {
+        --mdc-icon-size: 18px;
+        color: color-mix(in srgb, var(--forecast-text) 78%, transparent);
+        transition: transform 220ms ease, color 220ms ease;
+      }
+
+      .current-card.expanded .current-expand-icon,
+      .daily-card.expanded .current-expand-icon {
+        transform: rotate(180deg);
       }
 
       .current-icon-block,
@@ -973,12 +1390,68 @@ class MySmartWeatherCard extends LitElement {
       .daily-day {
         font-size: 1em;
         text-transform: capitalize;
+        color: var(--forecast-muted)
+      }
+
+      .daily-main,
+      .daily-meta-row,
+      .daily-condition,
+      .daily-meta {
+        min-width: 0;
+      }
+
+      .daily-condition,
+      .daily-meta {
+        white-space: nowrap;
+      }
+
+      .daily-condition {
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .daily-temp {
         font-size: 3em;
         font-weight: 300;
         line-height: 0.95;
+        color: var(--forecast-text)
+      }
+
+      .hours-scroll--nested {
+        margin: 0 -24px -6px;
+        padding: 2px 12px 6px;
+      }
+
+      .hours-row--nested {
+        gap: 6px;
+        padding-right: 0px;
+      }
+
+      .hours-row--nested .hour-card--nested:first-child {
+        margin-left: 0px;
+      }
+
+      .hour-card--nested .hour-time {
+        font-size: 11px;
+      }
+
+      .hour-card--nested .hour-icon {
+        --mdc-icon-size: 28px;
+      }
+
+      .hour-card--nested .hour-icon-wrap,
+      .hour-card--nested .hour-icon-image {
+        width: 28px;
+        height: 28px;
+      }
+
+      .hour-card--nested .hour-temp {
+        font-size: 22px;
+      }
+
+      .hour-card--nested .hour-meta {
+        font-size: 10px;
+        line-height: 1.15;
       }
 
       .daily-feels, .current-feels {
@@ -1059,6 +1532,19 @@ class MySmartWeatherCard extends LitElement {
           gap: 12px;
         }
 
+        .daily-card {
+          gap: 6px;
+        }
+
+        .daily-summary {
+          column-gap: 14px;
+        }
+
+        .current-details-grid {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
         .current-title,
         .daily-day {
           font-size: 18px;
@@ -1070,6 +1556,29 @@ class MySmartWeatherCard extends LitElement {
 
         .daily-temp {
           font-size: 44px;
+        }
+
+        .daily-temp-row {
+          gap: 8px;
+        }
+
+        .hours-scroll--nested {
+          margin: 0 -18px -6px;
+          padding: 2px 18px 6px;
+        }
+
+        .hours-row--nested {
+          padding-right: 18px;
+        }
+
+        .hours-row--nested .hour-card--nested:first-child {
+          margin-left: -12px;
+        }
+
+        .hour-card--nested {
+          width: 60px;
+          min-height: 102px;
+          padding: 8px 3px 6px;
         }
 
         .current-feels,
@@ -1227,10 +1736,11 @@ class MySmartWeatherCardEditor extends LitElement {
         <label class="select-field">
           <span class="select-label">Language</span>
           <select
-            .value=${this._config?.language || 'en'}
+            .value=${this._config?.language || ''}
             .configValue=${'language'}
             @change=${this._valueChanged}
           >
+            <option value="">Auto (Home Assistant locale)</option>
             <option value="en">English</option>
             <option value="no">Norwegian</option>
             <option value="de">German</option>
